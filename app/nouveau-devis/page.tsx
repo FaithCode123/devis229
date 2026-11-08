@@ -1,9 +1,9 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 
 type Item = { nom: string; quantite: number; prix: number };
 
-export default function NouveauDevis() {
+function NouveauDevisContent() {
   const [entreprise, setEntreprise] = useState<any>(null);
   const [clientNom, setClientNom] = useState("");
   const [clientTel, setClientTel] = useState("");
@@ -160,4 +160,12 @@ export default function NouveauDevis() {
       </div>
     </div>
   );
+}
+
+export default function NouveauDevis() {
+  return (
+    <Suspense>
+      <NouveauDevisContent />
+    </Suspense>
+  )
 }
