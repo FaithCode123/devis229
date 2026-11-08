@@ -1,165 +1,263 @@
-"use client";
-import { useState, useEffect, Suspense } from "react";
+"use client"
 
-type Item = { nom: string; quantite: number; prix: number };
+import { useState, useEffect, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { jsPDF } from "jspdf"
+
+type Ligne = {
+  conception: string
+  qte: string
+  prix: string
+}
 
 function NouveauDevisContent() {
-  const [entreprise, setEntreprise] = useState<any>(null);
-  const [clientNom, setClientNom] = useState("");
-  const [clientTel, setClientTel] = useState("");
-  const [items, setItems] = useState<Item[]>([
-    { nom: "", quantite: 1, prix: 0 },
-  ]);
-  const [mainOeuvre, setMainOeuvre] = useState(0);
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const editId = searchParams.get("edit")
 
+  const [client, setClient] = useState("")
+  const [whatsapp, setWhatsapp] = useState("")
+  const [lignes, setLignes] = useState<Ligne[]>([
+    { conception: "", qte: "1", prix: "" },
+  ])
+  const [mainOeuvre, setMainOeuvre] = useState("")
+
+  // Charger si on modifie un devis existant
   useEffect(() => {
-    const saved = localStorage.getItem("devis229_entreprise");
-    if (saved) setEntreprise(JSON.parse(saved));
-  }, []);
-
-  const totalItems = items.reduce((sum, it) => sum + Math.max(1, it.quantite) * Math.max(0, it.prix), 0);
-  const totalGeneral = totalItems + Math.max(0, mainOeuvre);
-
-  // Minimum 1 pour quantité, jamais négatif pour prix
-  const updateItem = (index: number, field: string, value: any) => {
-    const copy = [...items];
-    if (field === "nom") {
-      // @ts-ignore
-      copy[index][field] = value;
-    } else {
-      let n = Number(value);
-      if (isNaN(n)) n = 0;
-      if (field === "quantite") n = Math.max(1, Math.floor(n));
-      if (field === "prix") n = Math.max(0, n);
-      // @ts-ignore
-      copy[index][field] = n;
+    if (editId) {
+      const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
+      const found = saved.find((d: any) => String(d.id) === editId)
+      if (found) {
+        setClient(found.client || "")
+        setWhatsapp(found.whatsapp || "")
+        setLignes(found.lignes?.map((l: any) => ({
+          conception: String(l.conception || ""),
+          qte: String(l.qte ?? "1"),
+          prix: String(l.prix ?? ""),
+        })) || [{ conception: "", qte: "1", prix: "" }])
+        setMainOeuvre(String(found.mainOeuvre ?? ""))
+      }
     }
-    setItems(copy);
-  };
+  }, [editId])
 
-  const ajouterLigne = () => setItems([...items, { nom: "", quantite: 1, prix: 0 }]);
-  const supprimerLigne = (index: number) => setItems(items.filter((_, i) => i !== index));
+  const toNumber = (v: any) => {
+    if (v === "" || v === null || v === undefined) return 0
+    return parseFloat(String(v).replace(",", ".").replace(/\s/g, "")) || 0
+  }
 
-  const enregistrer = () => {
-    if (!clientNom) return alert("Mets le nom du client d'abord !");
-    if (items.some((it) => !it.nom.trim())) return alert("Il y a une ligne sans nom !");
+  const calcMontant = (qte: string, prix: string) => {
+    return toNumber(qte) * toNumber(prix)
+  }
+
+  const totalLignes = lignes.reduce((acc, l) => acc + calcMontant(l.qte, l.prix), 0)
+  const totalGeneral = totalLignes + toNumber(mainOeuvre)
+
+  const formatMoney = (n: number) => {
+    return n.toLocaleString("fr-FR") + " °F"
+  }
+
+  const updateLigne = (index: number, champ: keyof Ligne, valeur: string) => {
+    const copy = [...lignes]
+    copy[index] = { ...copy[index], [champ]: valeur }
+    setLignes(copy)
+  }
+
+  const ajouterLigne = () => {
+    setLignes([...lignes, { conception: "", qte: "1", prix: "" }])
+  }
+
+  const supprimerLigne = (index: number) => {
+    if (lignes.length === 1) return
+    setLignes(lignes.filter((_, i) => i !== index))
+  }
+
+  const sauvegarder = () => {
     const devis = {
-      id: Date.now(),
+      id: editId ? Number(editId) : Date.now(),
+      client: client || "Sans nom",
+      whatsapp,
+      lignes: lignes.map(l => ({
+        conception: l.conception,
+        qte: toNumber(l.qte),
+        prix: toNumber(l.prix),
+        montant: calcMontant(l.qte, l.prix),
+      })),
+      mainOeuvre: toNumber(mainOeuvre),
+      total: totalGeneral,
       date: new Date().toLocaleDateString("fr-FR"),
-      entreprise, clientNom, clientTel, items, mainOeuvre: Math.max(0, mainOeuvre),
-      total: totalGeneral, montantPaye: 0, statut: "en-attente",
-    };
-    const anciens = JSON.parse(localStorage.getItem("devis229_devis") || "[]");
-    localStorage.setItem("devis229_devis", JSON.stringify([devis, ...anciens]));
-    alert(`Devis de ${totalGeneral.toLocaleString()} F enregistré pour ${clientNom}`);
-  };
+    }
+    const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
+    const filtered = saved.filter((d: any) => String(d.id) !== String(devis.id))
+    localStorage.setItem("devis229", JSON.stringify([devis, ...filtered]))
+    router.push("/")
+  }
 
   const envoyerWhatsApp = () => {
-    const lignes = items.map((it) => `- ${it.nom} : ${it.quantite} x ${it.prix} = ${(it.quantite * it.prix).toLocaleString()} F`).join("\n");
-    const message = `Bonjour ${clientNom}, voici votre devis ${entreprise?.nom || ""} :\n\n${lignes}\nMain d'oeuvre : ${mainOeuvre.toLocaleString()} F\nTOTAL : ${totalGeneral.toLocaleString()} F`;
-    window.open(`https://wa.me/229${clientTel.replace(/\s/g, "")}?text=${encodeURIComponent(message)}`, "_blank");
-  };
+    if (!whatsapp) { alert("Mets le WhatsApp du client d'abord"); return }
+    let msg = `*DEVIS - Ets Faith Christian*\n`
+    msg += `Client : ${client}\nDate : ${new Date().toLocaleDateString("fr-FR")}\n\n`
+    lignes.forEach(l => {
+      msg += `- ${l.conception || "Article"} : ${l.qte} x ${formatMoney(toNumber(l.prix))} = ${formatMoney(calcMontant(l.qte, l.prix))}\n`
+    })
+    msg += `\nMain d'oeuvre : ${formatMoney(toNumber(mainOeuvre))}\n`
+    msg += `*TOTAL : ${formatMoney(totalGeneral)}*`
+    const num = whatsapp.replace(/\D/g, "")
+    const finalNum = num.startsWith("229") ? num : "229" + num
+    window.open(`https://wa.me/${finalNum}?text=${encodeURIComponent(msg)}`, "_blank")
+  }
+
+  // ===== VRAI TELECHARGEMENT PDF COMME CV229 =====
+  const telechargerPDF = () => {
+    const doc = new jsPDF()
+    const dateStr = new Date().toLocaleDateString("fr-FR")
+
+    // En-tête
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(16)
+    doc.text("Ets Faith Christian", 105, 18, { align: "center" })
+    doc.setFontSize(9)
+    doc.setFont("helvetica", "normal")
+    doc.text("Developpeur web - Seme Okoun", 105, 24, { align: "center" })
+    doc.text("Tel. : 0196448338  -  WhatsApp : 0194898272", 105, 29, { align: "center" })
+    doc.text("Banque : ", 105, 34, { align: "center" })
+    doc.line(15, 38, 195, 38)
+
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(11)
+    doc.text(`Client : ${client || "..."}`, 15, 48)
+    doc.text(`Date : ${dateStr}`, 15, 54)
+
+    // Tableau
+    let y = 66
+    doc.setFontSize(10)
+    doc.setFont("helvetica", "bold")
+    doc.text("Conception", 15, y)
+    doc.text("Qte", 95, y)
+    doc.text("Prix", 125, y)
+    doc.text("Montant", 165, y)
+    doc.line(15, y + 2, 195, y + 2)
+    y += 10
+
+    doc.setFont("helvetica", "normal")
+    lignes.forEach((l) => {
+      doc.text(String(l.conception || "-").substring(0, 30), 15, y)
+      doc.text(String(l.qte || "0"), 95, y)
+      doc.text(formatMoney(toNumber(l.prix)), 125, y)
+      doc.text(formatMoney(calcMontant(l.qte, l.prix)), 165, y)
+      y += 8
+      if (y > 260) { doc.addPage(); y = 20 }
+    })
+
+    y += 4
+    doc.setFont("helvetica", "bold")
+    doc.text("Main d'oeuvre", 15, y)
+    doc.text(formatMoney(toNumber(mainOeuvre)), 165, y)
+    y += 6
+    doc.line(15, y, 195, y)
+    y += 10
+    doc.setFontSize(12)
+    doc.text("TOTAL GENERAL", 15, y)
+    doc.text(formatMoney(totalGeneral), 165, y)
+
+    y += 18
+    doc.setFontSize(8)
+    doc.setFont("helvetica", "normal")
+    doc.text("Merci de votre confiance - Ets Faith Christian - Responsable : GNAMBODE Chedrack N.", 105, y, { align: "center" })
+    y += 12
+    doc.text("Signature : ____________________", 130, y)
+
+    const nomFichier = `Devis-${client ? client.replace(/\s+/g, "-") : "Client"}-${dateStr.replace(/\//g, "-")}.pdf`
+    doc.save(nomFichier)
+  }
 
   return (
-    <div className="max-w-[800px] mx-auto px-5 py-10">
-      {/* PARTIE ECRAN - cachée à l'impression */}
-      <div className="print:hidden">
-        <h1 className="text-3xl font-extrabold">Créer un devis</h1>
-        <p className="text-zinc-400 mt-1">Entreprise : {entreprise?.nom || "Va d'abord sur Mon Entreprise"}</p>
+    <div className="min-h-screen bg-white pb-10">
+      {/* Formulaire client */}
+      <div className="mx-3 mt-3 rounded-2xl bg-black p-4 space-y-3">
+        <input
+          value={client}
+          onChange={(e) => setClient(e.target.value)}
+          placeholder="Nom du client : Ex : M. Faith"
+          className="w-full rounded-xl bg-black border border-gray-700 px-4 py-3 text-white placeholder:text-gray-500 outline-none"
+        />
+        <input
+          value={whatsapp}
+          onChange={(e) => setWhatsapp(e.target.value)}
+          placeholder="WhatsApp du client : Ex: 0196000000"
+          inputMode="tel"
+          className="w-full rounded-xl bg-black border border-gray-700 px-4 py-3 text-white placeholder:text-gray-500 outline-none"
+        />
+      </div>
 
-        <div className="mt-8 bg-zinc-900 border border-zinc-800 rounded-2xl p-5">
-          <h2 className="font-bold mb-3">Client</h2>
-          <div className="grid grid-cols-2 gap-3">
-            <input value={clientNom} onChange={(e) => setClientNom(e.target.value)} placeholder="Nom du client : Ex: Mr Faith" className="bg-black text-white placeholder:text-zinc-500 border border-zinc-700 rounded-lg p-3 col-span-2" />
-            <input value={clientTel} onChange={(e) => setClientTel(e.target.value)} placeholder="WhatsApp du client : Ex: 0196000000" className="bg-black text-white placeholder:text-zinc-500 border border-zinc-700 rounded-lg p-3 col-span-2" />
+      <div className="px-4 mt-6 text-center">
+        <h2 className="font-bold text-lg">DEVIS - {new Date().toLocaleDateString("fr-FR")}</h2>
+        <p className="text-gray-600">Client : {client || "..."}</p>
+      </div>
+
+      {/* Tableau saisie */}
+      <div className="mx-3 mt-4">
+        <div className="grid grid-cols-[1fr_55px_85px_70px_20px] gap-1 bg-gray-100 px-2 py-2 font-bold text-sm">
+          <span>Conception</span><span className="text-center">Qté</span><span className="text-center">Prix</span><span className="text-center">Montant</span><span></span>
+        </div>
+
+        {lignes.map((ligne, i) => (
+          <div key={i} className="grid grid-cols-[1fr_55px_85px_70px_20px] gap-1 px-2 py-2 items-center border-b">
+            <input
+              value={ligne.conception}
+              onChange={(e) => updateLigne(i, "conception", e.target.value)}
+              placeholder="Ciment"
+              className="w-full rounded-md border border-black px-2 py-2 outline-none"
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              value={ligne.qte}
+              onChange={(e) => updateLigne(i, "qte", e.target.value)}
+              className="w-full rounded-md border border-black px-1 py-2 text-center outline-none"
+            />
+            <input
+              type="text"
+              inputMode="numeric"
+              value={ligne.prix}
+              onChange={(e) => updateLigne(i, "prix", e.target.value)}
+              placeholder="0"
+              className="w-full rounded-md border border-black px-1 py-2 text-right outline-none"
+            />
+            <span className="text-center font-bold text-sm">{formatMoney(calcMontant(ligne.qte, ligne.prix))}</span>
+            <button onClick={() => supprimerLigne(i)} className="text-red-500 font-bold">X</button>
           </div>
-        </div>
-      </div>
+        ))}
 
-      {/* VERSION ECRAN - pour modifier */}
-      <div className="mt-5 bg-white text-black rounded-2xl overflow-hidden print:hidden">
-        <div className="p-4">
-          <h3 className="text-center font-bold">DEVIS - {new Date().toLocaleDateString("fr-FR")}</h3>
-          <p className="text-center text-sm">Client : {clientNom || "..."}</p>
-        </div>
-        <table className="w-full text-sm">
-          <thead className="bg-zinc-100">
-            <tr><th className="text-left p-3">Désignation</th><th className="p-3">Qté</th><th className="p-3">Prix</th><th className="p-3 text-right">Montant</th><th></th></tr>
-          </thead>
-          <tbody>
-            {items.map((it, i) => (
-              <tr key={i} className="border-t">
-                <td className="p-2"><input value={it.nom} onChange={(e) => updateItem(i, "nom", e.target.value)} placeholder="Ex: Ciment" className="w-full border rounded p-2" /></td>
-                <td className="p-2"><input type="number" min={1} value={it.quantite} onChange={(e) => updateItem(i, "quantite", e.target.value)} className="w-[70px] border rounded p-2 text-center" /></td>
-                <td className="p-2"><input type="number" min={0} value={it.prix} onChange={(e) => updateItem(i, "prix", e.target.value)} className="w-[100px] border rounded p-2 text-right" /></td>
-                <td className="p-2 text-right font-bold">{(Math.max(1, it.quantite) * Math.max(0, it.prix)).toLocaleString()} F</td>
-                <td className="p-2"><button onClick={() => supprimerLigne(i)} className="text-red-500">X</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="p-4 flex justify-between items-center border-t">
+        <div className="flex justify-between items-center px-2 py-3">
           <span className="font-bold">Main d'oeuvre</span>
-          <input type="number" min={0} value={mainOeuvre} onChange={(e) => setMainOeuvre(Math.max(0, Number(e.target.value)))} className="w-[140px] border rounded p-2 text-right font-bold" />
-        </div>
-        <div className="p-4 bg-zinc-900 text-white flex justify-between">
-          <span className="font-extrabold text-lg">TOTAL GÉNÉRAL</span>
-          <span className="font-extrabold text-xl text-pink-400">{totalGeneral.toLocaleString()} F</span>
-        </div>
-      </div>
-
-      {/* VERSION IMPRESSION / PDF - propre, sans boutons, sans localhost */}
-      <div className="hidden print:block bg-white text-black p-6 pt-8">
-        {entreprise?.photo && <img src={entreprise.photo} className="w-full h-[150px] object-cover rounded-lg" />}
-
-        {/* ON AFFICHE TOUJOURS : même si il y a une photo, car certaines photos n'ont pas le WhatsApp, et certaines entreprises n'ont pas de photo */}
-        <div className="text-center mt-4">
-          <h2 className="font-extrabold text-xl">{entreprise?.nom}</h2>
-          <p className="text-sm">{entreprise?.metier} - {entreprise?.quartier}</p>
-          <p className="text-sm flex justify-center items-center gap-3 mt-1">
-            <span>Tel : {entreprise?.tel}</span>
-            <span className="flex items-center gap-1 font-bold text-green-700">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="#25D366"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/></svg>
-              WhatsApp : {entreprise?.whatsapp || entreprise?.tel}
-            </span>
-          </p>
-          <p className="text-sm">Banque : {entreprise?.banque}</p>
+          <input
+            type="text"
+            inputMode="numeric"
+            value={mainOeuvre}
+            onChange={(e) => setMainOeuvre(e.target.value)}
+            placeholder="0"
+            className="w-[160px] rounded-md border border-black px-2 py-2 text-right outline-none"
+          />
         </div>
 
-        <hr className="my-4 border-black" />
-        <p><b>Client :</b> {clientNom}</p>
-        <p><b>Date :</b> {new Date().toLocaleDateString("fr-FR")}</p>
-
-        <table className="w-full mt-4 text-sm border-collapse">
-          <thead><tr className="border-b-2 border-black"><th className="text-left py-2">Désignation</th><th>Qté</th><th>Prix</th><th className="text-right">Montant</th></tr></thead>
-          <tbody>
-            {items.map((it, i) => (
-              <tr key={i} className="border-b border-gray-300"><td className="py-2">{it.nom}</td><td className="text-center">{it.quantite}</td><td className="text-center">{it.prix.toLocaleString()} F</td><td className="text-right">{(it.quantite * it.prix).toLocaleString()} F</td></tr>
-            ))}
-          </tbody>
-        </table>
-
-        <div className="flex justify-between mt-3 font-bold"><span>Main d'oeuvre</span><span>{mainOeuvre.toLocaleString()} F</span></div>
-
-        <div className="flex justify-between mt-4 border-2 border-black p-3 font-extrabold text-lg bg-white text-black">
-          <span>TOTAL GÉNÉRAL</span><span>{totalGeneral.toLocaleString()} F</span>
+        <div className="flex justify-between items-center bg-black text-white rounded-b-2xl px-3 py-4">
+          <span className="font-bold text-lg">TOTAL GÉNÉRAL</span>
+          <span className="font-bold text-lg text-pink-500">{formatMoney(totalGeneral)}</span>
         </div>
 
-        <p className="text-center text-xs mt-8">Merci de votre confiance - {entreprise?.nom} - Responsable : {entreprise?.responsable}</p>
-        <p className="text-right mt-10">Signature : ___________________</p>
-      </div>
+        <button onClick={ajouterLigne} className="w-full mt-4 rounded-xl border border-dashed border-gray-400 py-3">+ Ajouter une ligne</button>
 
-      {/* BOUTONS - cachés à l'impression */}
-      <div className="print:hidden">
-        <button onClick={ajouterLigne} className="w-full mt-3 border border-dashed border-zinc-600 rounded-lg p-3">+ Ajouter une ligne</button>
-        <div className="grid grid-cols-2 gap-3 mt-5">
-          <button onClick={enregistrer} className="bg-pink-600 font-bold rounded-lg p-4">Enregistrer le devis</button>
-          <button onClick={envoyerWhatsApp} className="bg-green-600 font-bold rounded-lg p-4">Envoyer sur WhatsApp</button>
+        <div className="grid grid-cols-2 gap-3 mt-4">
+          <button onClick={sauvegarder} className="rounded-xl bg-pink-600 py-4 font-bold">Enregistrer le devis</button>
+          <button onClick={envoyerWhatsApp} className="rounded-xl bg-green-500 py-4 font-bold">Envoyer sur WhatsApp</button>
         </div>
-        <button onClick={() => window.print()} className="w-full mt-3 bg-blue-600 text-white font-bold rounded-lg p-4">Télécharger PDF (Imprimer)</button>
+
+        <button onClick={telechargerPDF} className="w-full mt-3 rounded-xl bg-blue-600 text-white py-4 font-bold">
+          Télécharger PDF
+        </button>
       </div>
     </div>
-  );
+  )
 }
 
 export default function NouveauDevis() {
