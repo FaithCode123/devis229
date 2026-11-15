@@ -2,6 +2,7 @@
 import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { jsPDF } from "jspdf"
+import { supabase } from '../../lib/supabase'
 
 type Ligne = { designation: string; qte: string; prix: string }
 
@@ -75,20 +76,76 @@ function NouveauDevisContent() {
     setLignes(c)
   }
 
-  const sauvegarder = () => {
-    const devis = {
-      id: editId ? Number(editId) : Date.now(),
-      client: client || "Sans nom", whatsapp,
-      lignes: lignes.map(l => ({ designation: l.designation, qte: toNumber(l.qte), prix: toNumber(l.prix), montant: calc(l.qte, l.prix) })),
-      mainOeuvre: toNumber(mainOeuvre), avance: montantAvance, total: totalGeneral,
-      date: new Date().toLocaleDateString("fr-FR"),
+  const [profil, setProfil] = useState<any>(null)
+
+  useEffect(() => {
+    const loadProfil = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return router.push('/login')
+      const { data } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+      setProfil(data)
     }
-    const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
-    localStorage.setItem("devis229", JSON.stringify([devis, ...saved.filter((d: any) => String(d.id) !== String(devis.id))]))
-    router.push("/")
+    loadProfil()
+  }, [])
+ const sauvegarder = async() => {
+  if (!editId && profil && !profil.est_payant && profil.essais_utilises >= 3) {
+    alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
+    router.push('/payer')
+    return
   }
 
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return router.push('/login')
+
+  const devisData = {
+    client: client || "Sans nom",
+    whatsapp,
+    lignes: lignes.map(l => ({ designation: l.designation, qte: toNumber(l.qte), prix: toNumber(l.prix), montant: calc(l.qte, l.prix) })),
+    mainOeuvre: toNumber(mainOeuvre),
+    avance: montantAvance,
+    total: totalGeneral,
+    date: new Date().toLocaleDateString("fr-FR"),
+  }
+
+  // 1. On garde localStorage comme sauvegarde
+  const devisLocal = { id: editId ? editId : Date.now(), ...devisData }
+  const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
+  localStorage.setItem("devis229", JSON.stringify([devisLocal, ...saved.filter((d: any) => String(d.id) !== String(devisLocal.id))]))
+
+  // 2. On enregistre VRAIMENT dans Supabase
+  if (editId && String(editId).includes("-")) {
+    // C'est un devis Supabase (uuid), on met à jour
+    await supabase.from('devis').update({
+      client_nom: client || "Sans nom",
+      total: totalGeneral,
+      avance: montantAvance,
+      data: devisData
+    }).eq('id', editId)
+  } else {
+    // C'est un nouveau devis, on insère
+    await supabase.from('devis').insert({
+      user_id: user.id,
+      client_nom: client || "Sans nom",
+      total: totalGeneral,
+      avance: montantAvance,
+      data: devisData
+    })
+  }
+
+  // 3. On enlève 1 essai si c'est un nouveau devis
+  if (!editId && profil && !profil.est_payant) {
+    await supabase.from('profiles').update({ essais_utilises: profil.essais_utilises + 1 }).eq('id', profil.id)
+  }
+
+  router.push("/dashboard")
+}
+
   const envoyerWhatsApp = () => {
+    if (!editId && profil && !profil.est_payant && profil.essais_utilises >= 3) {
+      alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
+      router.push('/payer')
+      return
+    }
     if (!whatsapp) { alert("Mets le WhatsApp du client"); return }
     let msg = `*DEVIS - ${entreprise.nom}*\nClient : ${client}\nTél client : ${whatsapp}\n\n`
     lignes.forEach(l => { msg += `- ${l.designation || "Article"} : ${l.qte} x ${formatMoney(toNumber(l.prix))} = ${formatMoney(calc(l.qte, l.prix))}\n` })
@@ -99,6 +156,11 @@ function NouveauDevisContent() {
   }
 
   const telechargerPDF = async () => {
+    if (!editId && profil && !profil.est_payant && profil.essais_utilises >= 3) {
+      alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
+      router.push('/payer')
+      return
+    }
     let ent: any = entreprise
     try {
       const frais = JSON.parse(localStorage.getItem("entreprise229") || "{}")
