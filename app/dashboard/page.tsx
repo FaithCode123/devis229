@@ -9,6 +9,7 @@ const formatMoney = (n: number) => {
 }
 
 export default function Dashboard() {
+  const [user, setUser] = useState<any>(null)
   const [profil, setProfil] = useState<any>(null)
   const [devis, setDevis] = useState<any[]>([])
   const [avanceOuverte, setAvanceOuverte] = useState<string | null>(null)
@@ -18,6 +19,7 @@ export default function Dashboard() {
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
+      setUser(user)
       if (!user) return router.push('/login')
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
       setProfil(p)
@@ -46,10 +48,45 @@ export default function Dashboard() {
   }
 
   if (!profil) return <p className="p-8 text-center">Chargement...</p>
-  const restants = 3 - profil.essais_utilises
+
+// NOUVEAU : Si bloqué, on bloque tout
+if (profil?.est_bloque) {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+      <div className="bg-white p-8 rounded-xl shadow text-center max-w-md">
+        <div className="text-5xl mb-4">🚫</div>
+        <h1 className="text-2xl font-bold mb-2">Compte bloqué</h1>
+        <p className="text-gray-600 mb-4">
+          Ton compte a été bloqué par l'admin.<br />
+          Contacte le <b>94898272 (WhatsApp)</b> pour le débloquer.
+        </p>
+        <a
+          href="https://wa.me/22994898272?text=Bonjour, mon compte devis229 est bloqué, aidez-moi à le débloquer"
+          target="_blank"
+          className="block bg-green-500 text-white px-6 py-3 rounded-lg font-bold mb-3"
+        >
+          💬 Contacter sur WhatsApp
+        </a>
+        <button
+          onClick={async () => { await supabase.auth.signOut(); window.location.href = "/login" }}
+          className="bg-black text-white px-6 py-3 rounded-lg"
+        >
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const restants = 3 - profil.essais_utilises
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 max-w-md mx-auto">
+      {profil?.email === "chedrackgnambode5@gmail.com" && (
+  <a href="/admin" className="block bg-black text-white text-center py-3 rounded-xl font-bold mb-3">
+    👑 Aller à mon Admin
+  </a>
+)}
       <h1 className="text-2xl font-bold">Bonjour {profil.nom_entreprise} 👋</h1>
 
       <div className="bg-white p-6 rounded-xl shadow mt-4 text-center">
@@ -70,7 +107,7 @@ export default function Dashboard() {
         </button>
       )}
 
-      <button onClick={()=>router.push('/nouveau-devis')} className="w-full bg-green-600 text-white p-4 rounded font-bold mt-4">
+      <button onClick={()=>router.push('/nouveau-devis?nouveau=' + Date.now())} className="w-full bg-green-600 text-white p-4 rounded font-bold mt-4">
         + Créer un devis
       </button>
       <button onClick={()=>router.push('/mon-entreprise')} className="w-full bg-white border p-4 rounded font-bold mt-3">🏢 Mon Entreprise / Logo</button>

@@ -1,5 +1,5 @@
 "use client"
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect, Suspense, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { jsPDF } from "jspdf"
 import { supabase } from '../../lib/supabase'
@@ -14,9 +14,11 @@ const formatMoney = (n: number) => {
 const ouvrirDB = () => new Promise<any>((resolve, reject) => {
   const req = indexedDB.open("devis229-images", 1)
   req.onupgradeneeded = () => { req.result.createObjectStore("images") }
+  req.onupgradeneeded = () => { req.result.createObjectStore("images") }
   req.onsuccess = () => resolve(req.result)
   req.onerror = () => reject(req.error)
 })
+
 const lireImageDB = async (cle: string) => {
   try {
     const db = await ouvrirDB()
@@ -28,35 +30,65 @@ const lireImageDB = async (cle: string) => {
   } catch { return null }
 }
 
-function NouveauDevisContent() {
+function NouveauDevisContent({ editId }: { editId: string | null }) {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const editId = searchParams.get("edit")
-
   const [client, setClient] = useState("")
   const [whatsapp, setWhatsapp] = useState("")
   const [lignes, setLignes] = useState<Ligne[]>([{ designation: "", qte: "1", prix: "" }])
   const [mainOeuvre, setMainOeuvre] = useState("")
   const [avance, setAvance] = useState("")
   const [entreprise, setEntreprise] = useState<any>({
-    nom: "Ets Faith Christian", activite: "Developpeur web - Seme Okoun", quartier: "Sèmè-Okoun", tel: "0196448338", whatsapp: "0194898272", banque: "", responsable: "GNAMBODE Chedrack N.", banniere: "", logo: "",
+    nom: "Ets Faith Christian",
+    activite: "Developpeur web - Seme Okoun",
+    quartier: "Sèmè-Okoun",
+    tel: "0196448338",
+    whatsapp: "0194898272",
+    banque: "",
+    responsable: "GNAMBODE Chedrack N.",
+    banniere: "",
+    logo: "",
   })
+  const devisIdEnCours = useRef<string | null>(null)
+  const essaiDejaCompte = useRef(false)
+
+  const viderFormulaire = () => {
+    devisIdEnCours.current = null
+    essaiDejaCompte.current = false
+    setClient("")
+    setWhatsapp("")
+    setLignes([{ designation: "", qte: "1", prix: "" }])
+    setMainOeuvre("")
+    setAvance("")
+  }
+
+  const appliquerDevis = (d: any) => {
+    setClient(d.client || d.client_nom || "")
+    setWhatsapp(d.whatsapp || "")
+    const liste = d.lignes || d.data?.lignes || []
+    setLignes(liste.length ? liste.map((l: any) => ({ designation: String(l.designation || ""), qte: String(l.qte ?? "1"), prix: String(l.prix ?? "") })) : [{ designation: "", qte: "1", prix: "" }])
+    setMainOeuvre(String(d.mainOeuvre ?? d.data?.mainOeuvre ?? ""))
+    setAvance(String(d.avance ?? d.data?.avance ?? ""))
+  }
 
   useEffect(() => {
     const s = localStorage.getItem("entreprise229")
     if (s) setEntreprise((prev: any) => ({ ...prev, ...JSON.parse(s) }))
     lireImageDB("banniere").then((b) => { if (b) setEntreprise((p: any) => ({ ...p, banniere: b })) })
     if (editId) {
-      const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
-      const found = saved.find((d: any) => String(d.id) === editId)
-      if (found) {
-        setClient(found.client || "")
-        setWhatsapp(found.whatsapp || "")
-        setLignes(found.lignes?.map((l: any) => ({ designation: String(l.designation || l.conception || ""), qte: String(l.qte ?? "1"), prix: String(l.prix ?? "") })) || [{ designation: "", qte: "1", prix: "" }])
-        setMainOeuvre(String(found.mainOeuvre ?? ""))
-        setAvance(String(found.avance ?? ""))
+      devisIdEnCours.current = editId
+      essaiDejaCompte.current = true
+      const charger = async () => {
+        const { data } = await supabase.from('devis').select('*').eq('id', editId).single()
+        if (data) { appliquerDevis({ ...data, ...(data.data || {}) }); return }
+        const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
+        const found = saved.find((x: any) => String(x.id) === editId)
+        if (found) appliquerDevis(found)
       }
+      charger()
+    } else {
+      viderFormulaire()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId])
 
   const toNumber = (v: any) => {
@@ -77,7 +109,6 @@ function NouveauDevisContent() {
   }
 
   const [profil, setProfil] = useState<any>(null)
-
   useEffect(() => {
     const loadProfil = async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -86,66 +117,62 @@ function NouveauDevisContent() {
       setProfil(data)
     }
     loadProfil()
-  }, [])
- const sauvegarder = async() => {
-  if (!editId && profil && !profil.est_payant && profil.essais_utilises >= 3) {
-    alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
-    router.push('/payer')
-    return
-  }
+  }, [router])
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return router.push('/login')
+  const sauvegarderSilencieux = async (): Promise<boolean> => {
+    // NOUVEAU 1 : Si bloqué, on ne sauvegarde rien
+    if (profil?.est_bloque) { alert("🚫 Compte bloqué, contactez l'admin."); return false }
 
-  const devisData = {
-    client: client || "Sans nom",
-    whatsapp,
-    lignes: lignes.map(l => ({ designation: l.designation, qte: toNumber(l.qte), prix: toNumber(l.prix), montant: calc(l.qte, l.prix) })),
-    mainOeuvre: toNumber(mainOeuvre),
-    avance: montantAvance,
-    total: totalGeneral,
-    date: new Date().toLocaleDateString("fr-FR"),
-  }
-
-  // 1. On garde localStorage comme sauvegarde
-  const devisLocal = { id: editId ? editId : Date.now(), ...devisData }
-  const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
-  localStorage.setItem("devis229", JSON.stringify([devisLocal, ...saved.filter((d: any) => String(d.id) !== String(devisLocal.id))]))
-
-  // 2. On enregistre VRAIMENT dans Supabase
-  if (editId && String(editId).includes("-")) {
-    // C'est un devis Supabase (uuid), on met à jour
-    await supabase.from('devis').update({
-      client_nom: client || "Sans nom",
-      total: totalGeneral,
-      avance: montantAvance,
-      data: devisData
-    }).eq('id', editId)
-  } else {
-    // C'est un nouveau devis, on insère
-    await supabase.from('devis').insert({
-      user_id: user.id,
-      client_nom: client || "Sans nom",
-      total: totalGeneral,
-      avance: montantAvance,
-      data: devisData
-    })
-  }
-
-  // 3. On enlève 1 essai si c'est un nouveau devis
-  if (!editId && profil && !profil.est_payant) {
-    await supabase.from('profiles').update({ essais_utilises: profil.essais_utilises + 1 }).eq('id', profil.id)
-  }
-
-  router.push("/dashboard")
-}
-
-  const envoyerWhatsApp = () => {
-    if (!editId && profil && !profil.est_payant && profil.essais_utilises >= 3) {
+    // Vérifie si l'abonnement est expiré
+    if (profil?.est_payant && profil?.abonnement_fin && new Date(profil.abonnement_fin) < new Date()) {
+      await supabase.from('profiles').update({ est_payant: false, abonnement_fin: null }).eq('id', profil.id)
+      setProfil({ ...profil, est_payant: false })
+      alert("Ton abonnement est terminé. Repasse en payant pour continuer en illimité.")
+      router.push('/payer')
+      return false
+    }
+    if (!editId && !devisIdEnCours.current && profil && !profil.est_payant && profil.essais_utilises >= 3) {
       alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
       router.push('/payer')
-      return
+      return false
     }
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { router.push('/login'); return false }
+    const devisData = {
+      client: client || "Sans nom",
+      whatsapp,
+      lignes: lignes.map(l => ({ designation: l.designation, qte: toNumber(l.qte), prix: toNumber(l.prix), montant: calc(l.qte, l.prix) })),
+      mainOeuvre: toNumber(mainOeuvre),
+      avance: montantAvance,
+      total: totalGeneral,
+      date: new Date().toLocaleDateString("fr-FR"),
+    }
+    const localId = editId ? editId : (devisIdEnCours.current || Date.now().toString())
+    const devisLocal = { id: localId, ...devisData }
+    const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
+    localStorage.setItem("devis229", JSON.stringify([devisLocal, ...saved.filter((d: any) => String(d.id) !== String(devisLocal.id))]))
+    if (devisIdEnCours.current) {
+      await supabase.from('devis').update({ client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).eq('id', devisIdEnCours.current)
+    } else {
+      const { data: inserted } = await supabase.from('devis').insert({ user_id: user.id, client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).select('id').single()
+      if (inserted?.id) devisIdEnCours.current = inserted.id
+    }
+    if (!editId && !essaiDejaCompte.current && profil && !profil.est_payant) {
+      essaiDejaCompte.current = true
+      await supabase.from('profiles').update({ essais_utilises: profil.essais_utilises + 1 }).eq('id', profil.id)
+      setProfil((p: any) => p ? { ...p, essais_utilises: p.essais_utilises + 1 } : p)
+    }
+    return true
+  }
+
+  const sauvegarder = async () => {
+    const ok = await sauvegarderSilencieux()
+    if (ok) { devisIdEnCours.current = null; router.push("/dashboard") }
+  }
+
+  const envoyerWhatsApp = async () => {
+    const ok = await sauvegarderSilencieux()
+    if (!ok) return
     if (!whatsapp) { alert("Mets le WhatsApp du client"); return }
     let msg = `*DEVIS - ${entreprise.nom}*\nClient : ${client}\nTél client : ${whatsapp}\n\n`
     lignes.forEach(l => { msg += `- ${l.designation || "Article"} : ${l.qte} x ${formatMoney(toNumber(l.prix))} = ${formatMoney(calc(l.qte, l.prix))}\n` })
@@ -156,11 +183,8 @@ function NouveauDevisContent() {
   }
 
   const telechargerPDF = async () => {
-    if (!editId && profil && !profil.est_payant && profil.essais_utilises >= 3) {
-      alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
-      router.push('/payer')
-      return
-    }
+    const ok = await sauvegarderSilencieux()
+    if (!ok) return
     let ent: any = entreprise
     try {
       const frais = JSON.parse(localStorage.getItem("entreprise229") || "{}")
@@ -188,14 +212,12 @@ function NouveauDevisContent() {
       doc.setFontSize(12); doc.setFont("helvetica", "normal"); doc.setTextColor(80, 80, 80)
       doc.text(ent.activite, 105, 26, { align: "center" })
       doc.setTextColor(30, 80, 160)
-      doc.text(`Qtier : ${ent.quartier}   Tel : ${ent.tel}`, 105, 33, { align: "center" })
+      doc.text(`Qtier : ${ent.quartier} Tel : ${ent.tel}`, 105, 33, { align: "center" })
       doc.text(`WhatsApp : ${ent.whatsapp}`, 105, 39, { align: "center" })
       if (ent.banque) doc.text(`Compte bancaire ${ent.banque}`, 105, 45, { align: "center" })
       doc.setDrawColor(30, 80, 160); doc.setLineWidth(0.8); doc.line(10, 49, 200, 49)
       y = 58
     }
-
-    // ===== NUMERO DU CLIENT SUR LE PDF =====
     doc.setTextColor(0, 0, 0)
     doc.setFont("helvetica", "bold"); doc.setFontSize(11)
     doc.text(`Client : ${client || "..."}`, 15, y)
@@ -207,7 +229,6 @@ function NouveauDevisContent() {
       y += 7
     }
     y += 3
-
     doc.setTextColor(0, 0, 0)
     doc.setFont("times", "bold"); doc.setFontSize(14)
     doc.text("Liste des matériels", 105, y, { align: "center" })
@@ -251,6 +272,35 @@ function NouveauDevisContent() {
     doc.save(`Devis-${client ? client.replace(/\s+/g, "-") : "Client"}-${dateStr.replace(/\//g, "-")}.pdf`)
   }
 
+  // NOUVEAU 2 : Écran bloqué, juste avant le return principal
+if (profil?.est_bloque) {
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+      <div className="bg-white p-8 rounded-xl shadow text-center max-w-md">
+        <div className="text-5xl mb-4">🚫</div>
+        <h1 className="text-2xl font-bold mb-2">Compte bloqué</h1>
+        <p className="text-gray-600 mb-4">
+          Ton compte a été bloqué par l'admin.<br />
+          Contacte le <b>94898272 (WhatsApp)</b> pour le débloquer.
+        </p>
+        <a
+          href="https://wa.me/22994898272?text=Bonjour, mon compte devis229 est bloqué, aidez-moi à le débloquer"
+          target="_blank"
+          className="block bg-green-500 text-white px-6 py-3 rounded-lg font-bold mb-3"
+        >
+          💬 Contacter sur WhatsApp
+        </a>
+        <button
+          onClick={async () => { await supabase.auth.signOut(); window.location.href = "/login" }}
+          className="bg-black text-white px-6 py-3 rounded-lg"
+        >
+          Se déconnecter
+        </button>
+      </div>
+    </div>
+  )
+}
+
   return (
     <div className="min-h-screen bg-white pb-10">
       {entreprise.banniere ? (
@@ -263,7 +313,6 @@ function NouveauDevisContent() {
       )}
       <div className="mx-3 mt-3 rounded-2xl bg-black p-4 space-y-3">
         <input value={client} onChange={(e) => setClient(e.target.value)} placeholder="Nom du client" className="w-full rounded-xl bg-black border border-gray-700 px-4 py-3 text-white outline-none" />
-        {/* On précise bien que ce numéro s'affichera sur la facture */}
         <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="Téléphone / WhatsApp du client - s'affichera sur la facture" inputMode="tel" className="w-full rounded-xl bg-black border border-gray-700 px-4 py-3 text-white outline-none" />
         {whatsapp && <p className="text-green-400 text-xs">✅ Ce numéro s'affichera sur le PDF : Tél client : {whatsapp}</p>}
       </div>
@@ -308,11 +357,19 @@ function NouveauDevisContent() {
           <button onClick={envoyerWhatsApp} className="rounded-xl bg-green-500 py-4 font-bold text-white">WhatsApp</button>
         </div>
         <button onClick={telechargerPDF} className="w-full mt-3 rounded-xl bg-blue-600 text-white py-4 font-bold">Télécharger PDF</button>
+        <button onClick={viderFormulaire} className="w-full mt-3 rounded-xl border border-gray-400 py-3 font-bold">🔄 Nouveau devis vierge</button>
       </div>
     </div>
   )
 }
 
+function NouveauDevisWrapper() {
+  const searchParams = useSearchParams()
+  const editId = searchParams.get("edit")
+  const nouveau = searchParams.get("nouveau")
+  return <NouveauDevisContent key={editId ? `edit-${editId}` : `new-${nouveau || "0"}`} editId={editId} />
+}
+
 export default function NouveauDevis() {
-  return (<Suspense><NouveauDevisContent /></Suspense>)
+  return (<Suspense><NouveauDevisWrapper /></Suspense>)
 }
