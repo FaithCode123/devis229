@@ -304,7 +304,7 @@ if (profil?.est_bloque) {
   return (
     <div className="min-h-screen bg-white pb-10">
       {entreprise.banniere ? (
-        <img src={entreprise.banniere} alt="Bannière" className="w-full h-[120px] object-cover" />
+        <img src={`${entreprise.banniere}?t=${Date.now()}`} key={entreprise.banniere} alt="Bannière" className="w-full h-[120px] object-cover" />
       ) : (
         <div className="mx-3 mt-3 bg-yellow-50 border border-yellow-400 rounded-xl p-3 text-center">
           <p className="text-sm font-bold text-yellow-700">⚠️ Pas encore de photo d'en-tête</p>
