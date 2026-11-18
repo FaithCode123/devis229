@@ -2,33 +2,55 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useRouter } from 'next/navigation'
-
+import BandeauAbonnement from "../BandeauAbonnement";
 const formatMoney = (n: number) => {
   const entier = Math.round(n || 0).toString()
   return entier.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + " F"
 }
-
 export default function Dashboard() {
   const [user, setUser] = useState<any>(null)
   const [profil, setProfil] = useState<any>(null)
   const [devis, setDevis] = useState<any[]>([])
   const [avanceOuverte, setAvanceOuverte] = useState<string | null>(null)
   const [montantAvance, setMontantAvance] = useState("")
+  const [abonnementExpire, setAbonnementExpire] = useState(false)
   const router = useRouter()
-
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       setUser(user)
       if (!user) return router.push('/login')
       const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+
+      // ÉTAPE 4 : Vérification automatique de l'expiration à chaque connexion
+      if (p) {
+        const fin = p.abonnement_fin || p.date_fin_abonnement
+        if (p.est_payant && fin) {
+          const dateFin = new Date(fin)
+          const aujourdHui = new Date()
+          aujourdHui.setHours(0, 0, 0, 0)
+          dateFin.setHours(0, 0, 0, 0)
+          if (dateFin < aujourdHui) {
+            // Abonnement terminé -> on repasse en Gratuit 3/3 automatiquement
+            await supabase.from('profiles').update({
+  est_payant: false,
+  essais_utilises: 3,
+  est_bloque: true
+}).eq('id', user.id)
+            // On met à jour le profil local pour afficher tout de suite le blocage
+            p.est_payant = false
+            p.essais_utilises = 3
+            setAbonnementExpire(true)
+          }
+        }
+      }
+
       setProfil(p)
       const { data: d } = await supabase.from('devis').select('*').eq('user_id', user.id).order('created_at', { ascending: false })
       setDevis(d || [])
     }
     load()
   }, [])
-
   const ajouterAvance = async (id: string) => {
     const montant = parseFloat(montantAvance.replace(",", ".").replace(/\s/g, "")) || 0
     if (montant <= 0) { alert("Mets le montant de l'avance d'abord"); return }
@@ -40,55 +62,50 @@ export default function Dashboard() {
     setAvanceOuverte(null)
     alert(`Avance de ${formatMoney(montant)} ajoutée ✅`)
   }
-
   const supprimer = async (id: string) => {
     if (!confirm("Supprimer ce devis ?")) return
     await supabase.from('devis').delete().eq('id', id)
     setDevis(devis.filter(d => d.id !== id))
   }
-
+  // ÉTAPE 4 : Bloquer la création de devis si essais épuisés
+  const creerDevis = () => {
+    if (!profil.est_payant && (3 - profil.essais_utilises) <= 0) {
+      alert("Tu as utilisé tes 3 devis gratuits. Passe au Payant pour continuer.")
+      router.push('/payer')
+      return
+    }
+    router.push('/nouveau-devis?nouveau=' + Date.now())
+  }
   if (!profil) return <p className="p-8 text-center">Chargement...</p>
-
-// NOUVEAU : Si bloqué, on bloque tout
-if (profil?.est_bloque) {
-  return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
-      <div className="bg-white p-8 rounded-xl shadow text-center max-w-md">
-        <div className="text-5xl mb-4">🚫</div>
-        <h1 className="text-2xl font-bold mb-2">Compte bloqué</h1>
-        <p className="text-gray-600 mb-4">
-          Ton compte a été bloqué par l'admin.<br />
-          Contacte le <b>94898272 (WhatsApp)</b> pour le débloquer.
-        </p>
-        <a
-          href="https://wa.me/22994898272?text=Bonjour, mon compte devis229 est bloqué, aidez-moi à le débloquer"
-          target="_blank"
-          className="block bg-green-500 text-white px-6 py-3 rounded-lg font-bold mb-3"
-        >
-          💬 Contacter sur WhatsApp
-        </a>
-        <button
-          onClick={async () => { await supabase.auth.signOut(); window.location.href = "/login" }}
-          className="bg-black text-white px-6 py-3 rounded-lg"
-        >
-          Se déconnecter
-        </button>
+  // NOUVEAU : Si bloqué, on bloque tout
+  if (profil?.est_bloque) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+        <div className="bg-white p-8 rounded-xl shadow text-center max-w-md">
+          <div className="text-5xl mb-4">🚫</div>
+          <h1 className="text-2xl font-bold mb-2">Compte bloqué</h1>
+          <p className="text-gray-600 mb-4"> Ton compte a été bloqué par l'admin.<br /> Contacte le <b>94898272 (WhatsApp)</b> pour le débloquer. </p>
+          <a href="https://wa.me/22994898272?text=Bonjour, mon compte devis229 est bloqué, aidez-moi à le débloquer" target="_blank" className="block bg-green-500 text-white px-6 py-3 rounded-lg font-bold mb-3" > 💬 Contacter sur WhatsApp </a>
+          <button onClick={async () => { await supabase.auth.signOut(); window.location.href = "/login" }} className="bg-black text-white px-6 py-3 rounded-lg" > Se déconnecter </button>
+        </div>
       </div>
-    </div>
-  )
-}
-
-const restants = 3 - profil.essais_utilises
-
+    )
+  }
+  const restants = 3 - profil.essais_utilises
   return (
     <div className="min-h-screen bg-gray-50 p-4 max-w-md mx-auto">
+      <BandeauAbonnement dateFin={profil?.abonnement_fin || profil?.date_fin_abonnement || ""} />
+      {/* ÉTAPE 4 : Message quand l'abonnement vient de se terminer */}
+      {abonnementExpire && (
+        <div className="bg-red-100 border border-red-400 text-red-800 p-4 rounded-xl font-bold text-center mb-3">
+          ⏰ Ton abonnement est terminé !<br />
+          <span className="font-normal text-sm">Ton compte est repassé à Gratuit (3/3). Paie pour débloquer et continuer.</span>
+        </div>
+      )}
       {profil?.email === "chedrackgnambode5@gmail.com" && (
-  <a href="/admin" className="block bg-black text-white text-center py-3 rounded-xl font-bold mb-3">
-    👑 Aller à mon Admin
-  </a>
-)}
+        <a href="/admin" className="block bg-black text-white text-center py-3 rounded-xl font-bold mb-3"> 👑 Aller à mon Admin </a>
+      )}
       <h1 className="text-2xl font-bold">Bonjour {profil.nom_entreprise} 👋</h1>
-
       <div className="bg-white p-6 rounded-xl shadow mt-4 text-center">
         {profil.est_payant ? (
           <p className="text-green-600 font-bold text-lg">Compte Payant ✅ - Illimité</p>
@@ -100,20 +117,12 @@ const restants = 3 - profil.essais_utilises
           </>
         )}
       </div>
-
       {!profil.est_payant && restants <= 0 && (
-        <button onClick={()=>router.push('/payer')} className="w-full bg-yellow-400 p-4 rounded font-bold mt-4">
-          Passer au payant - 5.000 F / mois
-        </button>
+        <button onClick={()=>router.push('/payer')} className="w-full bg-yellow-400 p-4 rounded font-bold mt-4"> Passer au payant - 5.000 F / mois </button>
       )}
-
-      <button onClick={()=>router.push('/nouveau-devis?nouveau=' + Date.now())} className="w-full bg-green-600 text-white p-4 rounded font-bold mt-4">
-        + Créer un devis
-      </button>
+      <button onClick={creerDevis} className="w-full bg-green-600 text-white p-4 rounded font-bold mt-4"> + Créer un devis </button>
       <button onClick={()=>router.push('/mon-entreprise')} className="w-full bg-white border p-4 rounded font-bold mt-3">🏢 Mon Entreprise / Logo</button>
-
       <h2 className="font-bold text-lg mt-6 mb-2">Mes Devis</h2>
-
       {devis.length === 0 ? (
         <div className="bg-white rounded-2xl p-4">
           <p className="font-bold">Exemple : Mr Faith</p>
@@ -135,9 +144,7 @@ const restants = 3 - profil.essais_utilises
                   <p className="text-sm">Avance : <span className="text-green-600 font-bold">{formatMoney(avanceD)}</span> - Reste : <span className="text-red-500 font-bold">{formatMoney(reste)}</span></p>
                 )}
                 {!estOuvert ? (
-                  <button onClick={() => { setAvanceOuverte(d.id); setMontantAvance("") }} className="w-full mt-3 bg-green-500 text-white py-3 rounded-xl font-bold">
-                    + Le client a payé une avance ?
-                  </button>
+                  <button onClick={() => { setAvanceOuverte(d.id); setMontantAvance("") }} className="w-full mt-3 bg-green-500 text-white py-3 rounded-xl font-bold"> + Le client a payé une avance ? </button>
                 ) : (
                   <div className="mt-3 bg-green-50 border border-green-300 rounded-xl p-3">
                     <p className="font-bold text-sm text-green-700">Combien il t'a donné ?</p>
@@ -157,7 +164,6 @@ const restants = 3 - profil.essais_utilises
           })}
         </div>
       )}
-
       <button onClick={async()=>{ await supabase.auth.signOut(); router.push('/login') }} className="w-full text-gray-500 p-3 mt-4 text-sm">Se déconnecter</button>
     </div>
   )

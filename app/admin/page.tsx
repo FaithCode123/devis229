@@ -1,15 +1,12 @@
 "use client"
 import { useEffect, useState } from "react"
 import { supabase } from "@/lib/supabase"
-
 const ADMIN_EMAIL = "chedrackgnambode5@gmail.com"
-
 export default function AdminPage() {
   const [clients, setClients] = useState<any[]>([])
   const [recherche, setRecherche] = useState("")
   const [loading, setLoading] = useState(true)
   const [pasAdmin, setPasAdmin] = useState(false)
-
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser()
@@ -26,22 +23,43 @@ export default function AdminPage() {
     init()
   }, [])
 
+  // NOUVEAU : Calculer les jours restants pour un client
+  const joursRestants = (c: any) => {
+    const fin = c.abonnement_fin || c.date_fin_abonnement
+    if (!fin) return null
+    return Math.ceil((new Date(fin).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+  }
+
+  // NOUVEAU : Nombre de clients qui expirent dans 3 jours
+  const nbExpirent = clients.filter(c => {
+    const j = joursRestants(c)
+    return j !== null && j <= 3 && j >= 0
+  }).length
+
   // Passer Payant avec la durée que TU choisis
   const passerPayant = async (id: string, jours: number, label: string) => {
     if (!confirm(`Passer ce client en Payant pour ${label} ?`)) return
     const fin = new Date()
     fin.setDate(fin.getDate() + jours)
-    const { error } = await supabase.from("profiles").update({ est_payant: true, abonnement_fin: fin.toISOString() }).eq("id", id)
+    // CORRIGÉ : On met à jour les 2 noms de colonne, SANS statut car la colonne n'existe pas dans Supabase
+    const { error } = await supabase.from("profiles").update({
+      est_payant: true,
+      est_bloque: false,
+      abonnement_fin: fin.toISOString(),
+      date_fin_abonnement: fin.toISOString().split("T")[0]
+    }).eq("id", id)
     if (error) { alert("Erreur : " + error.message); return }
-    setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: true, abonnement_fin: fin.toISOString() } : c))
+    setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: true, est_bloque: false, abonnement_fin: fin.toISOString(), date_fin_abonnement: fin.toISOString().split("T")[0] } : c))
   }
-
   const passerGratuit = async (id: string) => {
-    const { error } = await supabase.from("profiles").update({ est_payant: false, abonnement_fin: null }).eq("id", id)
+    const { error } = await supabase.from("profiles").update({
+      est_payant: false,
+      abonnement_fin: null,
+      date_fin_abonnement: null
+    }).eq("id", id)
     if (error) { alert("Erreur : " + error.message); return }
-    setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: false, abonnement_fin: null } : c))
+    setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: false, abonnement_fin: null, date_fin_abonnement: null } : c))
   }
-
   // NOUVEAU : Réinitialiser les essais à 0
   const resetEssais = async (id: string) => {
     if (!confirm("Remettre les essais de ce client à 0 ?")) return
@@ -49,40 +67,36 @@ export default function AdminPage() {
     if (error) { alert("Erreur : " + error.message); return }
     setClients(prev => prev.map(c => c.id === id ? { ...c, essais_utilises: 0 } : c))
   }
-
   const toggleBloquer = async (id: string, actuel: boolean) => {
     const { error } = await supabase.from("profiles").update({ est_bloque: !actuel }).eq("id", id)
     if (error) { alert("Erreur : " + error.message); return }
     setClients(prev => prev.map(c => c.id === id ? { ...c, est_bloque: !actuel } : c))
   }
-
-  const filtres = clients.filter(c =>
-    ((c.email || "") + " " + (c.nom_entreprise || "")).toLowerCase().includes(recherche.toLowerCase())
-  )
-
+  const filtres = clients.filter(c => ((c.email || "") + " " + (c.nom_entreprise || "")).toLowerCase().includes(recherche.toLowerCase()) )
   if (loading) return <div style={{ padding: 30 }}>Chargement...</div>
   if (pasAdmin) return <div style={{ padding: 30, color: "red" }}>Tu n'es pas Admin</div>
-
   return (
     <div style={{ padding: 30, maxWidth: 900, margin: "0 auto", fontFamily: "sans-serif" }}>
+      <a href="/admin/rappels" style={{ background: nbExpirent > 0 ? "#FECACA" : "#FEF3C7", border: "1px solid #F59E0B", padding: "12px", borderRadius: "10px", display: "block", textAlign: "center", fontWeight: "bold", color: "#92400E", textDecoration: "none", marginBottom: "15px" }}>
+        {nbExpirent > 0 ? `🚨 ${nbExpirent} abonnement(s) expire(nt) dans 3 jours - Voir les rappels →` : `⚠️ Voir les abonnements qui expirent dans 3 jours →`}
+      </a>
       <h1>👑 Mon Admin - Mes Clients</h1>
       <p style={{ color: "#666" }}>Connecté : {ADMIN_EMAIL} | Total : {clients.length} clients | Affichés : {filtres.length}</p>
-
-      <input
-        value={recherche}
-        onChange={(e) => setRecherche(e.target.value)}
-        placeholder="Rechercher un client par email..."
-        style={{ width: "100%", padding: 14, borderRadius: 10, border: "1px solid #ccc", fontSize: 16, marginBottom: 20 }}
-      />
-
-      {filtres.map((c) => (
-        <div key={c.id} style={{ border: "1px solid #eee", borderRadius: 12, padding: 16, marginBottom: 12, background: "#fff" }}>
+      <input value={recherche} onChange={(e) => setRecherche(e.target.value)} placeholder="Rechercher un client par email..." style={{ width: "100%", padding: 14, borderRadius: 10, border: "1px solid #ccc", fontSize: 16, marginBottom: 20 }} />
+      {filtres.map((c) => {
+        const j = joursRestants(c)
+        const expireBientot = j !== null && j <= 3 && j >= 0
+        const expire = j !== null && j < 0
+        const dateFin = c.abonnement_fin || c.date_fin_abonnement
+        return (
+        <div key={c.id} style={{ border: expireBientot ? "2px solid #F59E0B" : "1px solid #eee", borderRadius: 12, padding: 16, marginBottom: 12, background: expireBientot ? "#FFFBEB" : "#fff" }}>
           <div style={{ fontWeight: "bold", fontSize: 17 }}>{c.email}</div>
           <div style={{ color: "#666" }}>{c.nom_entreprise || "Sans nom"}</div>
           <div style={{ margin: "8px 0", fontSize: 14 }}>
-            {c.est_payant ? "✅ Payant" : "🆓 Gratuit"} | Essais : {c.essais_utilises ?? 0} | Fin : {c.abonnement_fin ? new Date(c.abonnement_fin).toLocaleDateString() : "—"} | {c.est_bloque ? "🚫 Bloqué" : "🟢 Actif"}
+            {c.est_payant ? "✅ Payant" : "🆓 Gratuit"} | Essais : {c.essais_utilises ?? 0} | Fin : {dateFin ? new Date(dateFin).toLocaleDateString() : "—"} | {c.est_bloque ? "🚫 Bloqué" : "🟢 Actif"}
+            {expireBientot && <span style={{ color: "#D97706", fontWeight: "bold" }}> | ⚠️ Expire dans {j} jours</span>}
+            {expire && <span style={{ color: "#DC2626", fontWeight: "bold" }}> | ❌ Expiré depuis {-j} jours</span>}
           </div>
-
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {c.est_payant ? (
               <button onClick={() => passerGratuit(c.id)} style={{ padding: "8px 12px", borderRadius: 8, border: "none", background: "#f1f1f1", cursor: "pointer" }}>Passer Gratuit</button>
@@ -100,7 +114,8 @@ export default function AdminPage() {
             </button>
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
