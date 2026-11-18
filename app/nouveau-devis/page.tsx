@@ -199,11 +199,15 @@ function NouveauDevisContent({ editId }: { editId: string | null }) {
     if (!ok) return
     let ent: any = entreprise
     try {
-      const frais = JSON.parse(localStorage.getItem("entreprise229") || "{}")
-      const banniereDB = await lireImageDB("banniere")
-      ent = { ...entreprise, ...frais, banniere: banniereDB || entreprise.banniere || frais.banniere || "" }
-      setEntreprise(ent)
-    } catch {}
+     const frais = JSON.parse(localStorage.getItem("entreprise229") || "{}")
+  // On prend la NOUVELLE bannière dans Supabase, JAMAIS dans IndexedDB
+  const { data: { user } } = await supabase.auth.getUser()
+  const { data } = await supabase.from("profiles").select("banniere_url, banniere").eq("id", user?.id).single()
+  const url = data?.banniere_url || data?.banniere || entreprise.banniere
+  // Attention : on met banniere APRES ...frais, pour que frais ne l'écrase pas avec l'ancienne
+  ent = { ...entreprise, ...frais, banniere: url, photo: url }
+  setEntreprise(ent)
+} catch {}
     const banniere = ent.banniere || ""
     const doc = new jsPDF()
     const dateStr = new Date().toLocaleDateString("fr-FR")
