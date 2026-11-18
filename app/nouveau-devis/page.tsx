@@ -72,8 +72,20 @@ function NouveauDevisContent({ editId }: { editId: string | null }) {
 
   useEffect(() => {
     const s = localStorage.getItem("entreprise229")
-    if (s) setEntreprise((prev: any) => ({ ...prev, ...JSON.parse(s) }))
-    lireImageDB("banniere").then((b) => { if (b) setEntreprise((p: any) => ({ ...p, banniere: b })) })
+  if (s) setEntreprise((prev: any) => ({...prev, ...JSON.parse(s)}))
+
+  // AJOUT : on va chercher la vraie bannière dans Supabase, elle gagne sur le local
+  ;(async () => {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+    const { data } = await supabase.from("profiles").select("banniere_url, banniere").eq("id", user.id).single()
+    const url = data?.banniere_url || data?.banniere
+    if (url) {
+      setEntreprise((prev: any) => ({ ...prev, banniere: url, photo: url }))
+      localStorage.setItem("entreprise229", JSON.stringify({ ...JSON.parse(s || "{}"), banniere: url, photo: url }))
+    }
+  })()
+    
     if (editId) {
       devisIdEnCours.current = editId
       essaiDejaCompte.current = true
@@ -304,7 +316,7 @@ if (profil?.est_bloque) {
   return (
     <div className="min-h-screen bg-white pb-10">
       {entreprise.banniere ? (
-        <img src={`${entreprise.banniere}?t=${Date.now()}`} key={entreprise.banniere} alt="Bannière" className="w-full h-[120px] object-cover" />
+        <img src={entreprise.banniere} alt="Bannière" className="w-full h-[120px] object-cover" />
       ) : (
         <div className="mx-3 mt-3 bg-yellow-50 border border-yellow-400 rounded-xl p-3 text-center">
           <p className="text-sm font-bold text-yellow-700">⚠️ Pas encore de photo d'en-tête</p>
