@@ -131,59 +131,30 @@ function NouveauDevisContent({ editId }: { editId: string | null }) {
     loadProfil()
   }, [router])
 
-  const sauvegarderSilencieux = async (): Promise<boolean> => {
-    // NOUVEAU 1 : Si bloqué, on ne sauvegarde rien
+  const sauvegarderSilencieux = async (compterEssai = false): Promise<boolean> => {
     if (profil?.est_bloque) { alert("🚫 Compte bloqué, contactez l'admin."); return false }
-
-    // Vérifie si l'abonnement est expiré
-    if (profil?.est_payant && profil?.abonnement_fin && new Date(profil.abonnement_fin) < new Date()) {
-      await supabase.from('profiles').update({ est_payant: false, abonnement_fin: null }).eq('id', profil.id)
-      setProfil({ ...profil, est_payant: false })
-      alert("Ton abonnement est terminé. Repasse en payant pour continuer en illimité.")
-      router.push('/payer')
-      return false
-    }
-    if (!editId && !devisIdEnCours.current && profil && !profil.est_payant && profil.essais_utilises >= 3) {
-      alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.')
-      router.push('/payer')
-      return false
-    }
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/login'); return false }
-    const devisData = {
-      client: client || "Sans nom",
-      whatsapp,
-      lignes: lignes.map(l => ({ designation: l.designation, qte: toNumber(l.qte), prix: toNumber(l.prix), montant: calc(l.qte, l.prix) })),
-      mainOeuvre: toNumber(mainOeuvre),
-      avance: montantAvance,
-      total: totalGeneral,
-      date: new Date().toLocaleDateString("fr-FR"),
-    }
+    if (profil?.est_payant && profil?.abonnement_fin && new Date(profil.abonnement_fin) < new Date()) { await supabase.from('profiles').update({ est_payant: false, abonnement_fin: null }).eq('id', profil.id); setProfil({ ...profil, est_payant: false }); alert("Ton abonnement est terminé. Repasse en payant pour continuer en illimité."); router.push('/payer'); return false }
+    // NOUVEAU : On bloque seulement si on veut compter un essai (un envoi) et qu'il a déjà fait ses 3
+    if (compterEssai && profil && !profil.est_payant && profil.essais_utilises >= 3) { alert('Tu as utilisé tes 3 devis gratuits. Passe au payant pour continuer.'); router.push('/payer'); return false }
+    const { data: { user } } = await supabase.auth.getUser(); if (!user) { router.push('/login'); return false }
+    const devisData = { client: client || "Sans nom", whatsapp, lignes: lignes.map(l => ({ designation: l.designation, qte: toNumber(l.qte), prix: toNumber(l.prix), montant: calc(l.qte, l.prix) })), mainOeuvre: toNumber(mainOeuvre), avance: montantAvance, total: totalGeneral, date: new Date().toLocaleDateString("fr-FR"), }
     const localId = editId ? editId : (devisIdEnCours.current || Date.now().toString())
     const devisLocal = { id: localId, ...devisData }
     const saved = JSON.parse(localStorage.getItem("devis229") || "[]")
     localStorage.setItem("devis229", JSON.stringify([devisLocal, ...saved.filter((d: any) => String(d.id) !== String(devisLocal.id))]))
-    if (devisIdEnCours.current) {
-      await supabase.from('devis').update({ client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).eq('id', devisIdEnCours.current)
-    } else {
-      const { data: inserted } = await supabase.from('devis').insert({ user_id: user.id, client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).select('id').single()
-      if (inserted?.id) devisIdEnCours.current = inserted.id
-    }
-    if (!editId && !essaiDejaCompte.current && profil && !profil.est_payant) {
-      essaiDejaCompte.current = true
-      await supabase.from('profiles').update({ essais_utilises: profil.essais_utilises + 1 }).eq('id', profil.id)
-      setProfil((p: any) => p ? { ...p, essais_utilises: p.essais_utilises + 1 } : p)
-    }
+    if (devisIdEnCours.current) { await supabase.from('devis').update({ client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).eq('id', devisIdEnCours.current) } else { const { data: inserted } = await supabase.from('devis').insert({ user_id: user.id, client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).select('id').single(); if (inserted?.id) devisIdEnCours.current = inserted.id }
+    // NOUVEAU : On déduit seulement si c'est un envoi (compterEssai = true), même en modification
+    if (compterEssai && profil && !profil.est_payant) { await supabase.from('profiles').update({ essais_utilises: profil.essais_utilises + 1 }).eq('id', profil.id); setProfil((p: any) => p ? { ...p, essais_utilises: p.essais_utilises + 1 } : p) }
     return true
   }
 
   const sauvegarder = async () => {
-    const ok = await sauvegarderSilencieux()
+    const ok = await sauvegarderSilencieux(false)
     if (ok) { devisIdEnCours.current = null; router.push("/dashboard") }
   }
 
   const envoyerWhatsApp = async () => {
-    const ok = await sauvegarderSilencieux()
+    const ok = await sauvegarderSilencieux(true)
     if (!ok) return
     if (!whatsapp) { alert("Mets le WhatsApp du client"); return }
     let msg = `*DEVIS - ${entreprise.nom}*\nClient : ${client}\nTél client : ${whatsapp}\n\n`
@@ -195,7 +166,7 @@ function NouveauDevisContent({ editId }: { editId: string | null }) {
   }
 
   const telechargerPDF = async () => {
-    const ok = await sauvegarderSilencieux()
+    const ok = await sauvegarderSilencieux(true)
     if (!ok) return
     let ent: any = entreprise
     try {
@@ -287,6 +258,49 @@ function NouveauDevisContent({ editId }: { editId: string | null }) {
     doc.text("Signature : ____________________", 140, y)
     doc.save(`Devis-${client ? client.replace(/\s+/g, "-") : "Client"}-${dateStr.replace(/\//g, "-")}.pdf`)
   }
+  // ===== NOUVEAU : Bouton Envoyer PDF - Même chose que Télécharger PDF =====
+  const envoyerPDF = async () => {
+    const ok = await sauvegarderSilencieux(true); if (!ok) return
+    let ent: any = entreprise
+    try {
+      const frais = JSON.parse(localStorage.getItem("entreprise229") || "{}")
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data } = await supabase.from("profiles").select("banniere_url, banniere").eq("id", user?.id).single()
+      const url = data?.banniere_url || data?.banniere || entreprise.banniere
+      ent = { ...entreprise, ...frais, banniere: url, photo: url }
+      setEntreprise(ent)
+    } catch {}
+    const banniere = ent.banniere || ""
+    const doc = new jsPDF()
+    const dateStr = new Date().toLocaleDateString("fr-FR")
+    let y = 10
+    let photoMise = false
+    if (banniere) { try { const format = banniere.includes("data:image/png") ? "PNG" : "JPEG"; doc.addImage(banniere, format, 10, y, 190, 45); photoMise = true; y = 60 } catch { photoMise = false } }
+    if (!photoMise) { doc.setTextColor(30, 80, 160); doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.text(ent.nom, 105, 18, { align: "center" }); doc.setFontSize(12); doc.setFont("helvetica", "normal"); doc.setTextColor(80, 80, 80); doc.text(ent.activite, 105, 26, { align: "center" }); doc.setTextColor(30, 80, 160); doc.text(`Qtier : ${ent.quartier} Tel : ${ent.tel}`, 105, 33, { align: "center" }); doc.text(`WhatsApp : ${ent.whatsapp}`, 105, 39, { align: "center" }); if (ent.banque) doc.text(`Compte bancaire ${ent.banque}`, 105, 45, { align: "center" }); doc.setDrawColor(30, 80, 160); doc.setLineWidth(0.8); doc.line(10, 49, 200, 49); y = 58 }
+    doc.setTextColor(0, 0, 0); doc.setFont("helvetica", "bold"); doc.setFontSize(11); doc.text(`Client : ${client || "..."}`, 15, y); doc.text(`Date : ${dateStr}`, 140, y); y += 7
+    if (whatsapp) { doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.text(`Tél client : ${whatsapp}`, 15, y); y += 7 }
+    y += 3; doc.setTextColor(0, 0, 0); doc.setFont("times", "bold"); doc.setFontSize(14); doc.text("Liste des matériels", 105, y, { align: "center" }); doc.line(75, y + 1, 135, y + 1); y += 10
+    const colX = [10, 75, 115, 155]; const colW = [65, 40, 40, 45]; const rowH = 9
+    const drawRow = (cells: string[], bold: boolean, yy: number) => { doc.setFont("times", bold ? "bold" : "normal"); doc.setFontSize(12); doc.setTextColor(0, 0, 0); cells.forEach((c, i) => { doc.rect(colX[i], yy, colW[i], rowH); const alignRight = i > 0; doc.text(c, alignRight ? colX[i] + colW[i] - 3 : colX[i] + 3, yy + 6.5, { align: alignRight ? "right" : "left" }) }) }
+    drawRow(["Désignation", "Quantités", "Prix unitaire", "Montant"], true, y); y += rowH
+    lignes.forEach((l) => { drawRow([String(l.designation || "-").substring(0, 28), String(l.qte || "0"), formatMoney(toNumber(l.prix)), formatMoney(calc(l.qte, l.prix))], false, y); y += rowH; if (y > 260) { doc.addPage(); y = 20 } })
+    drawRow(["Main d'oeuvre", "", "", formatMoney(toNumber(mainOeuvre))], true, y); y += rowH + 4
+    doc.setFont("times", "bold"); doc.setFontSize(13); doc.text("TOTAL GENERAL", 15, y); doc.text(formatMoney(totalGeneral), 190, y, { align: "right" })
+    if (aPayeAvance) { y += 10; doc.setFontSize(11); doc.text(`Avance recue : ${formatMoney(montantAvance)}`, 15, y); doc.text(`Reste a payer : ${formatMoney(reste)}`, 190, y, { align: "right" }) }
+    y += 20; doc.setFontSize(9); doc.setFont("times", "normal"); doc.text(`Merci de votre confiance - ${ent.nom} - Responsable : ${ent.responsable}`, 105, y, { align: "center" }); y += 12; doc.text("Signature : ____________________", 140, y)
+    const nomFichier = `Devis-${client ? client.replace(/\s+/g, "-") : "Client"}-${dateStr.replace(/\//g, "-")}.pdf`
+    const pdfBlob = doc.output("blob")
+    const pdfFile = new File([pdfBlob], nomFichier, { type: "application/pdf" })
+    const texte = `Bonjour ${client || ""}, voici votre devis ${entreprise.nom} - TOTAL : ${formatMoney(totalGeneral)} F. Merci de votre confiance.`
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
+        await navigator.share({ files: [pdfFile], title: `Devis - ${client || "Client"}`, text: texte })
+        return
+      }
+    } catch (e) { return }
+    doc.save(nomFichier)
+    if (whatsapp) { const num = whatsapp.replace(/\D/g, ""); window.open(`https://wa.me/${num.startsWith("229") ? num : "229" + num}?text=${encodeURIComponent(texte)}`, "_blank") }
+  }
 
   // NOUVEAU 2 : Écran bloqué, juste avant le return principal
 if (profil?.est_bloque) {
@@ -372,6 +386,7 @@ if (profil?.est_bloque) {
           <button onClick={sauvegarder} className="rounded-xl bg-pink-600 py-4 font-bold text-white">Enregistrer</button>
           <button onClick={envoyerWhatsApp} className="rounded-xl bg-green-500 py-4 font-bold text-white">WhatsApp</button>
         </div>
+        <button onClick={envoyerPDF} className="w-full mt-3 rounded-xl bg-emerald-600 text-white py-4 font-bold">📤 Envoyer PDF</button>
         <button onClick={telechargerPDF} className="w-full mt-3 rounded-xl bg-blue-600 text-white py-4 font-bold">Télécharger PDF</button>
         <button onClick={viderFormulaire} className="w-full mt-3 rounded-xl border border-gray-400 py-3 font-bold">🔄 Nouveau devis vierge</button>
       </div>
