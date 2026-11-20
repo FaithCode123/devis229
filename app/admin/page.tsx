@@ -37,7 +37,7 @@ export default function AdminPage() {
   }).length
 
   // Passer Payant avec la durée que TU choisis
-  const passerPayant = async (id: string, jours: number = 30) => {
+  const passerPayant = async (id: string, jours: number = 30, _label?: string) => {
   const fin = new Date()
   fin.setDate(fin.getDate() + jours)
   const dateFin = fin.toISOString().split('T')[0]
