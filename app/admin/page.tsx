@@ -15,7 +15,7 @@ export default function AdminPage() {
         setLoading(false)
         return
       }
-      const { data, error } = await supabase.from("profiles").select("*")
+     const { data, error } = await supabase.from("profiles").select("*")
       console.log("MES CLIENTS :", data, error)
       setClients(data || [])
       setLoading(false)
@@ -37,41 +37,42 @@ export default function AdminPage() {
   }).length
 
   // Passer Payant avec la durée que TU choisis
-  const passerPayant = async (id: string, jours: number, label: string) => {
-    if (!confirm(`Passer ce client en Payant pour ${label} ?`)) return
-    const fin = new Date()
-    fin.setDate(fin.getDate() + jours)
-    // CORRIGÉ : On met à jour les 2 noms de colonne, SANS statut car la colonne n'existe pas dans Supabase
-    const { error } = await supabase.from("profiles").update({
-      est_payant: true,
-      est_bloque: false,
-      abonnement_fin: fin.toISOString(),
-      date_fin_abonnement: fin.toISOString().split("T")[0]
-    }).eq("id", id)
-    if (error) { alert("Erreur : " + error.message); return }
-    setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: true, est_bloque: false, abonnement_fin: fin.toISOString(), date_fin_abonnement: fin.toISOString().split("T")[0] } : c))
-  }
+  const passerPayant = async (id: string, jours: number = 30) => {
+  const fin = new Date()
+  fin.setDate(fin.getDate() + jours)
+  const dateFin = fin.toISOString().split('T')[0]
+  const { error } = await supabase.rpc('admin_changer_abonnement', {
+    p_user_id: id,
+    p_est_payant: true,
+    p_fin_abonnement: dateFin
+  })
+  if (error) { alert("Erreur : " + error.message); return }
+  setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: true, abonnement_fin: dateFin, date_fin_abonnement: dateFin } : c))
+}
   const passerGratuit = async (id: string) => {
-    const { error } = await supabase.from("profiles").update({
-      est_payant: false,
-      abonnement_fin: null,
-      date_fin_abonnement: null
-    }).eq("id", id)
-    if (error) { alert("Erreur : " + error.message); return }
+  const { error } = await supabase.rpc('admin_changer_abonnement', { 
+    p_user_id: id, 
+    p_est_payant: false, 
+    p_fin_abonnement: null 
+  })
+  if (error) { alert("Erreur : " + error.message); return }
     setClients(prev => prev.map(c => c.id === id ? { ...c, est_payant: false, abonnement_fin: null, date_fin_abonnement: null } : c))
   }
   // NOUVEAU : Réinitialiser les essais à 0
   const resetEssais = async (id: string) => {
     if (!confirm("Remettre les essais de ce client à 0 ?")) return
-    const { error } = await supabase.from("profiles").update({ essais_utilises: 0 }).eq("id", id)
+    const { error } = await supabase.rpc('reinitialiser_essais_client', { p_user_id: id })
     if (error) { alert("Erreur : " + error.message); return }
     setClients(prev => prev.map(c => c.id === id ? { ...c, essais_utilises: 0 } : c))
   }
   const toggleBloquer = async (id: string, actuel: boolean) => {
-    const { error } = await supabase.from("profiles").update({ est_bloque: !actuel }).eq("id", id)
-    if (error) { alert("Erreur : " + error.message); return }
-    setClients(prev => prev.map(c => c.id === id ? { ...c, est_bloque: !actuel } : c))
-  }
+  const { error } = await supabase.rpc('admin_bloquer_client', {
+    p_user_id: id,
+    p_bloque: !actuel
+  })
+  if (error) { alert("Erreur : " + error.message); return }
+  setClients(prev => prev.map(c => c.id === id ? { ...c, est_bloque: !actuel } : c))
+}
   const filtres = clients.filter(c => ((c.email || "") + " " + (c.nom_entreprise || "")).toLowerCase().includes(recherche.toLowerCase()) )
   if (loading) return <div style={{ padding: 30 }}>Chargement...</div>
   if (pasAdmin) return <div style={{ padding: 30, color: "red" }}>Tu n'es pas Admin</div>

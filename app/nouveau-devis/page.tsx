@@ -144,7 +144,11 @@ function NouveauDevisContent({ editId }: { editId: string | null }) {
     localStorage.setItem("devis229", JSON.stringify([devisLocal, ...saved.filter((d: any) => String(d.id) !== String(devisLocal.id))]))
     if (devisIdEnCours.current) { await supabase.from('devis').update({ client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).eq('id', devisIdEnCours.current) } else { const { data: inserted } = await supabase.from('devis').insert({ user_id: user.id, client_nom: client || "Sans nom", total: totalGeneral, avance: montantAvance, data: devisData }).select('id').single(); if (inserted?.id) devisIdEnCours.current = inserted.id }
     // NOUVEAU : On déduit seulement si c'est un envoi (compterEssai = true), même en modification
-    if (compterEssai && profil && !profil.est_payant) { await supabase.from('profiles').update({ essais_utilises: profil.essais_utilises + 1 }).eq('id', profil.id); setProfil((p: any) => p ? { ...p, essais_utilises: p.essais_utilises + 1 } : p) }
+if (compterEssai && profil && !profil.est_payant) {
+  const { data: okEssai, error: errEssai } = await supabase.rpc('utiliser_un_essai')
+  
+  if (!okEssai) { alert("Tu as utilisé tes 3 devis gratuits, passe au payant pour continuer."); return false }
+}
     return true
   }
 
